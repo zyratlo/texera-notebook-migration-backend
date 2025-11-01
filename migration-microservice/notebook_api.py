@@ -1,5 +1,7 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS  # Import CORS
+import asyncio
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import os
 import json
 import nbformat as nbf
@@ -7,8 +9,16 @@ import openai
 from uuid import uuid4
 from time import sleep, time
 
-app = Flask(__name__)
-CORS(app)  # Allow all origins
+app = FastAPI(title="Notebook to Texera Migrator")
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 NOTEBOOK_PATH = "/home/jovyan/work"
 NOTEBOOK_NAME = ""
@@ -361,6 +371,7 @@ assistant_id = assistant.id
 thread = openai.beta.threads.create()
 thread_id = thread.id
 
+
 def call_gpt_assistant(prompt: str):
     openai.beta.threads.messages.create(
         thread_id=thread_id,
@@ -379,7 +390,7 @@ def call_gpt_assistant(prompt: str):
             break
         elif run_status.status == "failed":
             raise Exception("Run failed!")
-        sleep(1)
+        asyncio.sleep(1)
 
     messages = openai.beta.threads.messages.list(thread_id=thread_id)
     # Get the most recent assistant message
@@ -446,7 +457,7 @@ def python_script_to_texera(python_script: str, do_print: bool) -> str:
     return response, mapping
 
 
-def parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping, do_print=False):
+def parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping):
     """
     Converts the OpenAI workflow JSON into a Texera-compatible JSON and uni-directional mapping to bidirectional mapping
     :param open_ai_workflow: OpenAI workflow
@@ -455,16 +466,15 @@ def parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping, do_print=False
     """
     udf_open_ai_response = json.loads(open_ai_workflow.strip("```json").strip("```").strip(), strict=False)
 
-    workflow_json = \
-        {
-            "operators": [],
-            "operatorPositions": {},
-            "links": [],
-            "commentBoxes": [],
-            "settings": {
-                "dataTransferBatchSize": 400
-            }
+    workflow_json = {
+        "operators": [],
+        "operatorPositions": {},
+        "links": [],
+        "commentBoxes": [],
+        "settings": {
+            "dataTransferBatchSize": 400
         }
+    }
 
     udf_mapping_to_uuid = {}
 
@@ -555,7 +565,7 @@ def parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping, do_print=False
     return workflow_json, combined_mapping
 
 
-@app.route('/get_openai_response', methods=['POST'])
+@app.post("/get_openai_response")
 def get_openai_response(do_print=True):
     """
     Calls OpenAI with Texera documentation to generate and parse a workflow JSON and mapping JSON
@@ -563,75 +573,73 @@ def get_openai_response(do_print=True):
     :return: a JSON representing the workflow, and a JSON representing the mapping
     """
 
-    # Load the notebook
-    while not NOTEBOOK_SAVED:
-        sleep(2)
-    notebook_path = os.path.join(NOTEBOOK_PATH, NOTEBOOK_NAME)
-    with open(notebook_path, 'r', encoding='utf-8') as f:
-        notebook_file = nbf.read(f, as_version=4)
-
-    # Extract code cells and maintain separation
-    code_cells = [cell for cell in notebook_file.cells if cell.cell_type == 'code']
-
-    # Join the code into one string
-    notebook_string = "\n\n".join(
-        f"# START {cell['metadata']['uuid']}\n"
-        f"{cell['source']}\n"
-        f"# END {cell['metadata']['uuid']}"
-        for cell in code_cells
-    )
-
-    start_time = time()
-
-    open_ai_workflow, open_ai_mapping = python_script_to_texera(notebook_string, do_print)
-
-    end_time = time()
-    if do_print:
-        print(f"Time taken: {end_time - start_time:.6f} seconds")
-
-    final_workflow, final_mapping = parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping, do_print)
-
-    if do_print:
-        print(final_workflow)
-        print("-------------")
-        print(final_mapping)
-
-    return jsonify({"workflow": final_workflow, "mapping": final_mapping}), 200
-
-
-@app.route('/set_notebook', methods=['POST'])
-def set_notebook():
     try:
-        global NOTEBOOK_NAME
-        data = request.json
+        # Load the notebook
+        while not NOTEBOOK_SAVED:
+            sleep(2)
+        notebook_path = os.path.join(NOTEBOOK_PATH, NOTEBOOK_NAME)
+        with open(notebook_path, 'r', encoding='utf-8') as f:
+            notebook_file = nbf.read(f, as_version=4)
+
+        # Extract code cells and maintain separation
+        code_cells = [cell for cell in notebook_file.cells if cell.cell_type == 'code']
+
+        # Join the code into one string
+        notebook_string = "\n\n".join(
+            f"# START {cell['metadata']['uuid']}\n"
+            f"{cell['source']}\n"
+            f"# END {cell['metadata']['uuid']}"
+            for cell in code_cells
+        )
+
+        start_time = time()
+
+        open_ai_workflow, open_ai_mapping = python_script_to_texera(notebook_string, do_print)
+
+        end_time = time()
+        if do_print:
+            print(f"Time taken: {end_time - start_time:.6f} seconds")
+
+        final_workflow, final_mapping = parse_workflow_and_mapping(open_ai_workflow, open_ai_mapping)
+
+        if do_print:
+            print(final_workflow)
+            print("-------------")
+            print(final_mapping)
+
+        return JSONResponse(content={"workflow": final_workflow, "mapping": final_mapping})
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/set_notebook")
+async def set_notebook(request: Request):
+    global NOTEBOOK_SAVED, NOTEBOOK_NAME
+    try:
+        data = await request.json()
         NOTEBOOK_NAME = data.get('notebookName', 'example.ipynb')
         notebook_data = data.get('notebookData')
+
+        if not notebook_data:
+            raise HTTPException(status_code=400, detail="Notebook data is required")
 
         for cell in notebook_data["cells"]:
             if 'metadata' not in cell:
                 cell['metadata'] = {}
             cell['metadata']['uuid'] = str(uuid4())
 
-        if not notebook_data:
-            return jsonify({"error": "Notebook data is required"}), 400
-
         # Save the notebook JSON file
         notebook_file_path = os.path.join(NOTEBOOK_PATH, NOTEBOOK_NAME)
         with open(notebook_file_path, 'w', encoding='utf-8') as f:
             json.dump(notebook_data, f, indent=4)
-    
-        global NOTEBOOK_SAVED
+
         NOTEBOOK_SAVED = True
 
-        return {
+        return JSONResponse(content={
             "message": "Notebook saved successfully",
             "notebookPath": notebook_file_path
-        }
+        })
 
     except Exception as e:
-        print(f"Unexpected server error: {e}")
-        return {"error": f"Unexpected server error: {str(e)}"}
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        raise HTTPException(status_code=500, detail=f"Unexpected server error: {str(e)}")
