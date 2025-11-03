@@ -8,7 +8,7 @@ mkdir -p /home/jovyan/work
 mkdir -p /home/jovyan/.jupyter/custom
 
 # Default notebook file path
-NOTEBOOK_PATH="/home/jovyan/work/example.ipynb"
+NOTEBOOK_PATH="/home/jovyan/work/notebook.ipynb"
 
 # Check if NOTEBOOK_URL or NOTEBOOK_JSON is set
 if [ ! -f "$NOTEBOOK_PATH" ]; then

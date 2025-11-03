@@ -21,6 +21,7 @@ RUN chown -R $NB_UID:$NB_UID /home/jovyan/.jupyter/custom
 
 # Copy the Fast API script
 COPY notebook_api.py /home/jovyan/notebook_api.py
+COPY routers/ /home/jovyan/routers/
 
 # Copy the start script and set permissions
 COPY start.sh /usr/local/bin/start.sh
