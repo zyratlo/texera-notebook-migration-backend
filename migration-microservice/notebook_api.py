@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import jupyter_endpoint, openai_endpoint, postgres_endpoint
+from routers import jupyter_endpoint, postgres_endpoint
 
 app = FastAPI(title="Notebook to Texera Migrator")
 
@@ -14,5 +14,4 @@ app.add_middleware(
 )
 
 app.include_router(jupyter_endpoint.router)
-app.include_router(openai_endpoint.router)
 app.include_router(postgres_endpoint.router)
