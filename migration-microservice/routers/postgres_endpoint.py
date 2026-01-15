@@ -8,7 +8,7 @@ router = APIRouter(prefix="/postgres", tags=["postgres"])
 DB_CONFIG = {
     "host": "host.docker.internal",
     "port": 5432,
-    "database": "texera_notebook_migration_db",
+    "database": "texera_db",
     "user": "texera",
     "password": "password"
 }
@@ -34,14 +34,23 @@ async def store_mapping_and_workflow(request: Request):
         data = await request.json()
         wid = data["wid"]
         mapping_data = data["mapping"]
+        version = data["version"]
         notebook_data = data["notebook"]
 
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                # Insert into notebook_migration_notebook_data
                 cur.execute("""
-                    INSERT INTO texera_notebook_migration_db.migration_data (wid, mapping, notebook)
+                    INSERT INTO texera_db.notebook_migration_notebook_data (wid, notebook)
+                    VALUES (%s, %s)
+                    """, (wid, Json(notebook_data)))
+
+                # Insert into notebook_migration_mapping_data
+                cur.execute("""
+                    INSERT INTO texera_db.notebook_migration_mapping_data (wid, version, mapping)
                     VALUES (%s, %s, %s)
-                    """, (wid, Json(mapping_data), Json(notebook_data)))
+                    """, (wid, version, Json(mapping_data)))
+
                 conn.commit()
 
         return {"message": "Mapping and workflow stored successfully."}
@@ -57,47 +66,29 @@ async def get_mapping_and_workflow(request: Request):
     try:
         data = await request.json()
         wid = data["wid"]
+        version = data["version"]
 
         with get_db_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT mapping, notebook
-                    FROM texera_notebook_migration_db.migration_data
-                    WHERE wid = %s;
-                """, (wid,))
+                    SELECT 
+                        nmn.notebook,
+                        nmm.mapping
+                    FROM 
+                        texera_db.notebook_migration_notebook_data AS nmn
+                    JOIN 
+                        texera_db.notebook_migration_mapping_data AS nmm
+                        ON nmn.wid = nmm.wid
+                    WHERE 
+                        nmn.wid = %s
+                        AND nmm.version = %s;
+                """, (wid, version))
                 result = cur.fetchone()
 
         if not result:
             return {"exists": False}
 
         return {"exists": True, "mapping": result["mapping"], "notebook": result["notebook"]}
-
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Missing field: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected server error: {str(e)}")
-
-
-@router.post("/delete_by_wid")
-async def delete_by_wid(request: Request):
-    try:
-        data = await request.json()
-        wid = data["wid"]
-
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    DELETE FROM texera_notebook_migration_db.migration_data
-                    WHERE wid = %s
-                    RETURNING wid;
-                """, (wid,))
-                deleted = cur.fetchone()
-                conn.commit()
-
-        if not deleted:
-            return {"deleted": False, "message": f"No entry found for wid={wid}"}
-
-        return {"deleted": True, "message": f"Entry with wid={wid} successfully deleted."}
 
     except KeyError as e:
         raise HTTPException(status_code=400, detail=f"Missing field: {str(e)}")
