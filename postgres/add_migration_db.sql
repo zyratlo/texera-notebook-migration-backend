@@ -11,18 +11,22 @@ SET search_path TO texera_db;
 
 BEGIN;
 
-CREATE TABLE notebook_migration_notebook_data (
-    wid         INT     NOT NULL    PRIMARY KEY,
+CREATE TABLE notebook (
+    wid         INT     NOT NULL,
+    nid         SERIAL  NOT NULL,
     notebook    JSONB   NOT NULL,
+    PRIMARY KEY (wid, nid),
     FOREIGN KEY (wid) REFERENCES workflow(wid) ON DELETE CASCADE
 );
 
-CREATE TABLE notebook_migration_mapping_data (
+CREATE TABLE workflow_notebook_mapping (
     wid         INT     NOT NULL,
-    version     INT     NOT NULL,
+    vid         INT     NOT NULL,
+    nid         INT     NOT NULL,
     mapping     JSONB   NOT NULL,
-    PRIMARY KEY (wid, version),
-    FOREIGN KEY (wid) REFERENCES workflow(wid) ON DELETE CASCADE
+    PRIMARY KEY (vid, nid),
+    FOREIGN KEY (vid) REFERENCES workflow_version(vid) ON DELETE CASCADE,
+    FOREIGN KEY (wid, nid) REFERENCES notebook(wid, nid) ON DELETE CASCADE
 );
 
 COMMIT;
